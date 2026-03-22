@@ -136,8 +136,8 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Failed to create questions" }, { status: 500 });
     }
 
-    // Deduct credits
-    await deductCredits(
+    // Deduct credits after all database operations succeed
+    const creditResult = await deductCredits(
       userId,
       CREDIT_COSTS.QUIZ_GENERATION,
       "quiz_generation",
@@ -148,6 +148,17 @@ export async function POST(req: NextRequest) {
         questionCount: questions.length,
       }
     );
+
+    if (!creditResult.success) {
+      console.error("Credit deduction failed:", creditResult.error);
+      // Attempt cleanup if credit deduction fails
+      await supabase.from("questions").delete().eq("quiz_id", quiz.id);
+      await supabase.from("quizzes").delete().eq("id", quiz.id);
+      return NextResponse.json(
+        { error: "Failed to process payment", details: creditResult.error },
+        { status: 500 }
+      );
+    }
 
     return NextResponse.json({
       success: true,
