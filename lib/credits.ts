@@ -72,6 +72,7 @@ export async function hasEnoughCredits(
 
 /**
  * Deduct credits from user account
+ * Uses atomic conditional update to prevent race conditions
  */
 export async function deductCredits(
   userId: string,
@@ -83,37 +84,41 @@ export async function deductCredits(
   const supabase = await createClient();
 
   try {
-    // Get current balance
-    const { data: profile, error: profileError } = await supabase
+    // Atomic update: only deduct if user has sufficient credits
+    // This prevents race conditions where multiple concurrent requests
+    // could overdraft the account
+    const { data: updatedProfile, error: updateError } = await supabase
       .from("user_profiles")
-      .select("credits")
+      .update({ credits: supabase.raw(`credits - ${amount}`) })
       .eq("user_id", userId)
+      .gte("credits", amount)
+      .select("credits")
       .single();
 
-    if (profileError || !profile) {
-      return { success: false, newBalance: 0, error: "User not found" };
+    if (updateError || !updatedProfile) {
+      // Check if it was insufficient credits or another error
+      const { data: profile } = await supabase
+        .from("user_profiles")
+        .select("credits")
+        .eq("user_id", userId)
+        .single();
+
+      if (!profile) {
+        return { success: false, newBalance: 0, error: "User not found" };
+      }
+
+      if (profile.credits < amount) {
+        return {
+          success: false,
+          newBalance: profile.credits,
+          error: "Insufficient credits",
+        };
+      }
+
+      return { success: false, newBalance: profile.credits, error: updateError?.message || "Failed to deduct credits" };
     }
 
-    const currentBalance = profile.credits;
-    const newBalance = currentBalance - amount;
-
-    if (newBalance < 0) {
-      return {
-        success: false,
-        newBalance: currentBalance,
-        error: "Insufficient credits",
-      };
-    }
-
-    // Update user balance
-    const { error: updateError } = await supabase
-      .from("user_profiles")
-      .update({ credits: newBalance })
-      .eq("user_id", userId);
-
-    if (updateError) {
-      return { success: false, newBalance: currentBalance, error: updateError.message };
-    }
+    const newBalance = updatedProfile.credits;
 
     // Record transaction
     await supabase.from("credit_transactions").insert({
@@ -133,6 +138,7 @@ export async function deductCredits(
 
 /**
  * Add credits to user account
+ * Uses atomic increment to prevent race conditions
  */
 export async function addCredits(
   userId: string,
@@ -144,29 +150,29 @@ export async function addCredits(
   const supabase = await createClient();
 
   try {
-    // Get current balance
-    const { data: profile, error: profileError } = await supabase
+    // Atomic increment using raw SQL expression
+    const { data: updatedProfile, error: updateError } = await supabase
       .from("user_profiles")
-      .select("credits")
+      .update({ credits: supabase.raw(`credits + ${amount}`) })
       .eq("user_id", userId)
+      .select("credits")
       .single();
 
-    if (profileError || !profile) {
-      return { success: false, newBalance: 0, error: "User not found" };
+    if (updateError || !updatedProfile) {
+      const { data: profile } = await supabase
+        .from("user_profiles")
+        .select("credits")
+        .eq("user_id", userId)
+        .single();
+
+      if (!profile) {
+        return { success: false, newBalance: 0, error: "User not found" };
+      }
+
+      return { success: false, newBalance: profile.credits, error: updateError?.message || "Failed to add credits" };
     }
 
-    const currentBalance = profile.credits;
-    const newBalance = currentBalance + amount;
-
-    // Update user balance
-    const { error: updateError } = await supabase
-      .from("user_profiles")
-      .update({ credits: newBalance })
-      .eq("user_id", userId);
-
-    if (updateError) {
-      return { success: false, newBalance: currentBalance, error: updateError.message };
-    }
+    const newBalance = updatedProfile.credits;
 
     // Record transaction
     await supabase.from("credit_transactions").insert({
@@ -183,7 +189,6 @@ export async function addCredits(
     return { success: false, newBalance: 0, error: error.message };
   }
 }
-
 /**
  * Get user's current credit balance
  */
@@ -240,6 +245,7 @@ export async function canPerformAction(
 
 /**
  * Perform action with automatic credit deduction
+ * Note: deductCredits now handles atomic credit check, so separate pre-check is optional
  */
 export async function performActionWithCredits<T>(
   userId: string,
@@ -247,20 +253,14 @@ export async function performActionWithCredits<T>(
   actionFn: () => Promise<T>,
   metadata?: Record<string, any>
 ): Promise<{ success: boolean; data?: T; error?: string }> {
-  // Check if user has enough credits
-  const { allowed, reason } = await canPerformAction(userId, action);
-
-  if (!allowed) {
-    return { success: false, error: reason };
-  }
+  const cost = CREDIT_COSTS[action];
 
   try {
-    // Perform the action
+    // Perform the action first
     const result = await actionFn();
 
-    // Deduct credits
-    const cost = CREDIT_COSTS[action];
-    const { success, error } = await deductCredits(
+    // Deduct credits atomically (includes balance check)
+    const { success, newBalance, error } = await deductCredits(
       userId,
       cost,
       action.toLowerCase(),

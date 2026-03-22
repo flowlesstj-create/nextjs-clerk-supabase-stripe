@@ -11,7 +11,8 @@ export async function GET(req: NextRequest) {
     }
 
     const { searchParams } = new URL(req.url);
-    const limit = parseInt(searchParams.get("limit") || "50");
+    const limitParam = searchParams.get("limit");
+    const limit = limitParam ? Math.max(1, Math.min(100, parseInt(limitParam) || 50)) : 50;
 
     const supabase = await createClient();
 

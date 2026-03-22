@@ -27,7 +27,8 @@ export default function OnboardingPage() {
     fullName.trim().length > 1 &&
     country &&
     city &&
-    university.trim().length > 1;
+    university.trim().length > 1 &&
+    course.trim().length > 1;
 
   const onSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -35,14 +36,12 @@ export default function OnboardingPage() {
     setSubmitting(true);
     try {
       posthog.capture('onboarding_form_submitted', {
-        country: country?.label,
-        city: city?.label,
-        university: university.trim(),
-        course: course.trim(),
         purpose_provided: purpose.trim().length > 0,
         referral_source: referral,
+        has_country: !!country,
+        has_city: !!city,
       });
-      await fetch("/api/onboarding", {
+      const res = await fetch("/api/onboarding", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -56,7 +55,13 @@ export default function OnboardingPage() {
           referral_source: referral,
         }),
       });
+      if (!res.ok) {
+        throw new Error('Failed to submit onboarding data');
+      }
       window.location.href = "/dashboard";
+    } catch (error) {
+      console.error('Onboarding submission failed:', error);
+      alert('Failed to save your information. Please try again.');
     } finally {
       setSubmitting(false);
     }

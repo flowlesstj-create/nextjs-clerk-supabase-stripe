@@ -532,7 +532,7 @@ export default function LandingPage() {
             </div>
           </div>
           <div className="mt-12 pt-8 border-t text-center text-sm text-muted-foreground">
-            <p>&copy; 2025 LetsReWise. All rights reserved.</p>
+            <p>&copy; 2026 LetsReWise. All rights reserved.</p>
           </div>
         </div>
       </footer>

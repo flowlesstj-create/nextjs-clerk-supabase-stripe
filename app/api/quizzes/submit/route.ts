@@ -2,6 +2,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@clerk/nextjs/server";
 import { createClient } from "@/utils/supabase/server";
+import { z } from "zod";
 
 export async function POST(req: NextRequest) {
   try {
@@ -9,13 +10,25 @@ export async function POST(req: NextRequest) {
     if (!userId) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
-
     const body = await req.json();
-    const { quizId, answers, timeTaken, startedAt } = body;
-
-    if (!quizId || !answers) {
-      return NextResponse.json({ error: "Quiz ID and answers required" }, { status: 400 });
+    
+    // Validate input with Zod schema
+    const submitSchema = z.object({
+      quizId: z.string().uuid("Invalid quiz ID format"),
+      answers: z.record(z.string(), z.string().optional()),
+      timeTaken: z.number().positive().optional(),
+      startedAt: z.string().datetime().optional(),
+    });
+    
+    const validation = submitSchema.safeParse(body);
+    if (!validation.success) {
+      return NextResponse.json(
+        { error: "Invalid request body", details: validation.error.errors },
+        { status: 400 }
+      );
     }
+    
+    const { quizId, answers, timeTaken, startedAt } = validation.data;
 
     const supabase = await createClient();
 

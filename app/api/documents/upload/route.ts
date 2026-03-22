@@ -28,7 +28,7 @@ export async function POST(req: NextRequest) {
     // Parse form data
     const formData = await req.formData();
     const file = formData.get("file") as File;
-    const title = formData.get("title") as string;
+    const title = (formData.get("title") as string)?.slice(0, 200) || "";
 
     if (!file) {
       return NextResponse.json({ error: "No file provided" }, { status: 400 });
@@ -98,7 +98,10 @@ export async function POST(req: NextRequest) {
     }
 
     // Process document in background (chunking and embedding)
-    processDocumentBackground(document.id, cleanedText, userId);
+    // Fire-and-forget background processing with explicit error handling
+    processDocumentBackground(document.id, cleanedText, userId).catch((err) => {
+      console.error("Background processing failed:", err);
+    });
 
     // Deduct credits
     await deductCredits(
